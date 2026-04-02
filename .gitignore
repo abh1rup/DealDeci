@@ -1,6 +1,6 @@
 .env
 node_modules/
-*.zip
+TestPitches.zip
 output/
 runs.json
 users.json
