@@ -11,7 +11,7 @@ const pdfParse = require('pdf-parse');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-let OUTPUT_DIR = path.join(__dirname, '..', 'output');
+let OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(__dirname, '..', 'output');
 
 // Ensure output directory exists
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -63,7 +63,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 // ══════════════════════════════════════
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'dealdeci2026';
-const USERS_FILE = path.join(__dirname, '..', 'users.json');
+const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, '..', 'users.json');
 
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8')); } catch { return []; }
@@ -922,7 +922,7 @@ app.get('/api/browse-folder', (req, res) => {
 // ══════════════════════════════════════
 // ── Run history (persisted to JSON file) ──
 // ══════════════════════════════════════
-const RUNS_FILE = path.join(__dirname, '..', 'runs.json');
+const RUNS_FILE = process.env.RUNS_FILE || path.join(__dirname, '..', 'runs.json');
 
 function loadRuns() {
   try { return JSON.parse(fs.readFileSync(RUNS_FILE, 'utf-8')); } catch { return []; }

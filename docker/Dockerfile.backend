@@ -1,30 +1,21 @@
-##############################################
-# DealDeci — Single-container build (all-in-one)
-# Use this if you want one container instead of docker-compose
-#
-# Build:  docker build -t dealdeci .
-# Run:    docker run -p 3000:3000 --env-file .env -v dealdeci-data:/data dealdeci
-##############################################
-
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies first (layer caching)
 COPY backend/package.json backend/package-lock.json ./
 RUN npm install --production && npm cache clean --force
 
-# Copy application
+# Copy backend code
 COPY backend/server.js ./server.js
-COPY frontend/ ./frontend/
 
-# Create data directory
+# Create data directories
 RUN mkdir -p /data/output
 
+# The data volume is mounted at /data
 ENV OUTPUT_DIR=/data/output
 ENV RUNS_FILE=/data/runs.json
 ENV USERS_FILE=/data/users.json
-ENV PORT=3000
 
 EXPOSE 3000
 
