@@ -1,0 +1,6 @@
+.env
+node_modules/
+*.zip
+output/
+runs.json
+users.json

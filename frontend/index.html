@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DealDeci — Pitch Decimator AI</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23E8523A'/><text x='50' y='72' font-size='60' font-family='sans-serif' font-weight='bold' text-anchor='middle' fill='white'>D</text></svg>">
+</head>
+<body>
+
+<!-- ── SIDEBAR ── -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-title">Dashboard</div>
+    <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
+  </div>
+  <div class="sidebar-content">
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Recent Sessions</div>
+      <div id="historyList" class="history-list">
+        <div class="history-empty">No analyses yet. Upload a pitch to get started.</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Quick Stats</div>
+      <div class="quick-stats" id="quickStats">
+        <div class="stat-row"><span>Pitches Analyzed</span><span id="statTotal">0</span></div>
+        <div class="stat-row"><span>Avg. Score</span><span id="statAvg">--</span></div>
+        <div class="stat-row"><span>Enhancements Made</span><span id="statEnhanced">0</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Saved Files</div>
+      <div id="savedFilesList" class="history-list">
+        <div class="history-empty">No saved files yet.</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Active Agents (12)</div>
+      <div class="agent-list" id="agentList">
+        <div class="agent-row"><span class="agent-dot active"></span>Silicon Valley VC</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Southeast Angel</div>
+        <div class="agent-row"><span class="agent-dot active"></span>University Judge</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Traditional Businessman</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Impact Investor</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Serial Founder</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Corporate VC</div>
+        <div class="agent-row"><span class="agent-dot active"></span>PE / Growth Equity</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Deep Tech Investor</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Family Office</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Emerging Markets VC</div>
+        <div class="agent-row"><span class="agent-dot active"></span>Fintech Specialist</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ── LOGIN MODAL ── -->
+<div class="modal-overlay" id="loginOverlay" onclick="closeLogin()">
+  <div class="modal" onclick="event.stopPropagation()" style="width:380px;">
+    <div class="modal-header">
+      <div class="modal-title">Sign In</div>
+      <button class="modal-close" onclick="closeLogin()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-group">
+        <div class="settings-label">Email</div>
+        <input type="text" class="settings-input" id="loginUser" placeholder="admin@dealdeci.com" autocomplete="username" onkeydown="loginKeydown(event)">
+      </div>
+      <div class="settings-group">
+        <div class="settings-label">Password</div>
+        <input type="password" class="settings-input" id="loginPass" placeholder="Password" autocomplete="current-password" onkeydown="loginKeydown(event)">
+      </div>
+      <div id="loginError" style="color:var(--coral);font-size:0.78rem;min-height:1.2rem;margin-top:0.25rem;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="doLogin()" style="width:100%;">Sign In</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── SETTINGS MODAL ── -->
+<div class="modal-overlay" id="settingsOverlay" onclick="closeSettings()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Settings</div>
+      <button class="modal-close" onclick="closeSettings()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-group">
+        <div class="settings-label">AI Model</div>
+        <div class="settings-desc">Haiku is faster and cheaper; Sonnet is more thorough.</div>
+        <select class="settings-select" id="settingModel">
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-6-20250514">Claude Sonnet 4.6 (Thorough)</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <div class="settings-label">Active Personas</div>
+        <div class="settings-desc">Choose which investor personas to run.</div>
+        <div class="persona-toggles" id="personaToggles"></div>
+      </div>
+      <div class="settings-group">
+        <div class="settings-label">Analysis Depth</div>
+        <div class="settings-desc">Controls how many vulnerabilities and questions each persona generates.</div>
+        <select class="settings-select" id="settingDepth">
+          <option value="light">Light (3 vulns, 4 Q&A)</option>
+          <option value="standard" selected>Standard (5 vulns, 6 Q&A)</option>
+          <option value="deep">Deep (8 vulns, 10 Q&A)</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <div class="settings-label">Scoring Strictness</div>
+        <div class="settings-desc">How harshly should agents score your pitch?</div>
+        <select class="settings-select" id="settingStrictness">
+          <option value="lenient">Lenient (Encouraging)</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="brutal">Brutal (No mercy)</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <div class="settings-label">Auto-Enhance</div>
+        <div class="settings-desc">Automatically generate pitch enhancements after analysis completes.</div>
+        <label class="toggle">
+          <input type="checkbox" id="settingAutoEnhance">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="resetSettings()">Reset Defaults</button>
+      <button class="btn btn-primary btn-sm" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="header-left">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+    <a href="/" class="logo" onclick="resetApp(); return false;">
+      <div class="logo-icon">D</div>
+      <div class="logo-text">
+        <div class="logo-mark">DEAL<span>DECI</span></div>
+        <div class="logo-sub">Pitch Decimator AI</div>
+      </div>
+    </a>
+  </div>
+  <div class="header-right">
+    <div class="header-controls">
+      <button class="header-icon-btn" onclick="decreaseFontSize()" title="Decrease font size">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><text x="4" y="17" font-size="14" fill="currentColor" stroke="none" font-family="sans-serif">A</text><line x1="18" y1="12" x2="22" y2="12"/></svg>
+      </button>
+      <button class="header-icon-btn" onclick="increaseFontSize()" title="Increase font size">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><text x="1" y="18" font-size="18" fill="currentColor" stroke="none" font-family="sans-serif">A</text><line x1="18" y1="9" x2="18" y2="15"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
+      </button>
+      <button class="header-icon-btn" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark mode">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </div>
+    <button class="header-icon-btn" onclick="openSettings()" title="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    </button>
+    <div id="authArea"></div>
+  </div>
+</header>
+
+<!-- ── MAIN ── -->
+<main>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-badge">12 AI Investor Agents &middot; Parallel Analysis</div>
+    <h1>STRESS-TEST YOUR<br>PITCH <em>BEFORE</em><br>INVESTORS DO</h1>
+    <p>Upload your deck. Twelve AI investor personas tear it apart simultaneously. Get scored, challenged, and enhanced — in seconds.</p>
+  </section>
+
+  <!-- Upload Section -->
+  <section class="upload-section-full">
+
+    <div class="upload-row">
+      <div class="upload-card">
+        <h3><span class="step-num">1</span> Upload Your Pitch Deck</h3>
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="12"/><line x1="15" y1="15" x2="12" y2="12"/></svg></div>
+          <div class="drop-text">Drop your file here or click to browse</div>
+          <div class="drop-formats">PPTX &middot; DOCX</div>
+          <div class="file-name" id="fileName"></div>
+        </div>
+        <input type="file" id="fileInput" accept=".pptx,.ppt,.docx,.doc" hidden>
+      </div>
+
+      <div class="upload-card">
+        <h3><span class="step-num">2</span> Add Context <span style="font-family:'Inter',sans-serif;font-size:0.72rem;font-weight:300;opacity:0.35;letter-spacing:0;">optional</span></h3>
+        <textarea class="context-textarea" id="contextInput" placeholder="The ask, market size, business model, traction — anything that helps our agents give sharper feedback."></textarea>
+      </div>
+    </div>
+
+    <div class="upload-card agent-selector-card">
+      <h3><span class="step-num">3</span> Select Investor Agents
+        <span class="agent-count-badge" id="agentCountBadge">12 selected</span>
+      </h3>
+      <div class="agent-selector" id="agentSelector"></div>
+      <div class="agent-selector-actions">
+        <button class="btn btn-outline btn-sm" onclick="selectAllAgents()">Select All</button>
+        <button class="btn btn-outline btn-sm" onclick="deselectAllAgents()">Deselect All</button>
+      </div>
+    </div>
+
+    <div class="upload-card save-folder-card">
+      <h3><span class="step-num">\u{1F4C1}</span> Save Folder</h3>
+      <div class="save-folder-display">
+        <span class="save-folder-path" id="saveFolderPath">Loading...</span>
+        <button class="btn btn-outline btn-sm" onclick="changeSaveFolder()">Change</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- Launch -->
+  <section class="launch-section">
+    <button class="btn-launch" id="launchBtn" disabled onclick="runAnalysis()">DECIMATE THE PITCH</button>
+    <div class="error-box" id="errorBox"></div>
+  </section>
+
+  <!-- Progress -->
+  <section class="progress-section" id="progressSection">
+    <div class="progress-title">Deploying Investor Agents</div>
+    <div class="agent-progress-grid" id="agentGrid"></div>
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" id="progressFill"></div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="results-section" id="resultsSection">
+    <div class="results-header">
+      <div class="results-title">Decimation Report</div>
+      <div class="results-actions">
+        <button class="btn btn-outline btn-sm" onclick="resetApp()">New Analysis</button>
+      </div>
+    </div>
+
+    <div class="section-heading">Aggregate Scores <span style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:400;opacity:0.5;letter-spacing:0;text-transform:none;">(averaged across all agents)</span></div>
+    <div class="scorecard" id="aggregateScorecard"></div>
+
+    <div class="section-heading">Per-Agent Breakdown</div>
+    <div class="persona-tabs" id="personaTabs"></div>
+    <div class="scorecard" id="scorecard"></div>
+
+    <div class="section-heading">Vulnerabilities Identified</div>
+    <div class="vuln-list" id="vulnList"></div>
+
+    <div class="section-heading">Adversarial Q&amp;A</div>
+    <div class="qa-list" id="qaList"></div>
+
+    <div id="recSection" style="display:none;">
+      <div class="section-heading">Recommendations</div>
+      <div class="rec-list" id="recList"></div>
+    </div>
+
+    <!-- Enhance Section -->
+    <section class="enhance-section">
+      <div class="enhance-card">
+        <h3>Enhance Your Pitch</h3>
+        <p>Based on feedback from all 12 investor personas, our AI generates specific improvements to strengthen your pitch. Download or save to the project folder.</p>
+        <textarea class="context-textarea" id="enhanceFeedback" placeholder="Any specific areas to focus on? (optional)" style="min-height:70px;margin-bottom:1rem;"></textarea>
+        <button class="btn btn-primary" id="enhanceBtn" onclick="enhancePitch()">ENHANCE MY PITCH</button>
+        <div class="enhance-result" id="enhanceResult"></div>
+      </div>
+    </section>
+  </section>
+
+</main>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-brand">DealDeci LLC</div>
+  <span>Copyright &copy; 2026 DealDeci LLC. All rights reserved. Confidential and proprietary.</span>
+</footer>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
