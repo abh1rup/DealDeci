@@ -330,15 +330,107 @@ async function loadSaveFolder() {
   }
 }
 
-async function changeSaveFolder() {
+async function browseSaveFolder() {
+  // Try modern File System Access API first (Chrome/Edge)
+  if (window.showDirectoryPicker) {
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      // The browser API gives a handle but not a full path — we need the backend to resolve it.
+      // Since showDirectoryPicker doesn't expose the full system path, fall back to the
+      // backend directory browser.
+      openFolderBrowser();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // user cancelled
+    }
+  }
+  // Fallback: open the folder browser modal
+  openFolderBrowser();
+}
+
+async function openFolderBrowser() {
   const current = document.getElementById('saveFolderPath').textContent;
-  const newFolder = prompt('Enter the full path for the save folder:', current);
-  if (!newFolder || newFolder === current) return;
+  try {
+    const res = await fetch('/api/browse-folder?path=' + encodeURIComponent(current));
+    const data = await res.json();
+    showFolderPicker(data.current, data.folders, data.parent);
+  } catch (err) {
+    showError('Could not load folders: ' + err.message);
+  }
+}
+
+function showFolderPicker(currentPath, folders, parentPath) {
+  // Reuse the settings overlay for the folder picker modal
+  let overlay = document.getElementById('folderPickerOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'folderPickerOverlay';
+    overlay.className = 'modal-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('open'); };
+    overlay.innerHTML = `
+      <div class="modal" onclick="event.stopPropagation()" style="width:520px;">
+        <div class="modal-header">
+          <div class="modal-title">Choose Save Folder</div>
+          <button class="modal-close" onclick="document.getElementById('folderPickerOverlay').classList.remove('open')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:0;">
+          <div class="folder-current" id="folderCurrentPath"></div>
+          <div class="folder-list" id="folderList"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('folderPickerOverlay').classList.remove('open')">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="folderSelectBtn" onclick="confirmFolderSelection()">Select This Folder</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+
+  document.getElementById('folderCurrentPath').textContent = currentPath;
+  overlay.dataset.selected = currentPath;
+
+  let html = '';
+  if (parentPath) {
+    html += `<div class="folder-item" onclick="navigateFolder('${parentPath.replace(/'/g, "\\'")}')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+      <span>..</span>
+    </div>`;
+  }
+  folders.forEach(f => {
+    const full = currentPath.replace(/\/$/, '') + '/' + f;
+    html += `<div class="folder-item" onclick="navigateFolder('${full.replace(/'/g, "\\'")}')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span>${escapeHtml(f)}</span>
+    </div>`;
+  });
+  if (folders.length === 0 && !parentPath) {
+    html = '<div class="folder-empty">No subfolders found</div>';
+  }
+  document.getElementById('folderList').innerHTML = html;
+  overlay.classList.add('open');
+}
+
+async function navigateFolder(path) {
+  try {
+    const res = await fetch('/api/browse-folder?path=' + encodeURIComponent(path));
+    const data = await res.json();
+    const overlay = document.getElementById('folderPickerOverlay');
+    if (overlay) overlay.dataset.selected = data.current;
+    showFolderPicker(data.current, data.folders, data.parent);
+  } catch (err) {
+    showError('Cannot open folder: ' + err.message);
+  }
+}
+
+async function confirmFolderSelection() {
+  const overlay = document.getElementById('folderPickerOverlay');
+  const selected = overlay?.dataset.selected;
+  if (!selected) return;
+
   try {
     const res = await fetch('/api/save-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder: newFolder }),
+      body: JSON.stringify({ folder: selected }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -346,6 +438,7 @@ async function changeSaveFolder() {
     }
     const { folder } = await res.json();
     document.getElementById('saveFolderPath').textContent = folder;
+    overlay.classList.remove('open');
   } catch (err) {
     showError(err.message);
   }

@@ -810,6 +810,43 @@ app.post('/api/save-folder', requireAuth, (req, res) => {
 });
 
 // ══════════════════════════════════════
+// ── Browse folders (for folder picker) ──
+// ══════════════════════════════════════
+app.get('/api/browse-folder', (req, res) => {
+  try {
+    let target = req.query.path || OUTPUT_DIR;
+    target = path.resolve(target);
+
+    // Security: only allow browsing under home directory or /tmp
+    const home = require('os').homedir();
+    if (!target.startsWith(home) && !target.startsWith('/tmp')) {
+      return res.status(403).json({ error: 'Can only browse folders under your home directory.' });
+    }
+
+    if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+      return res.status(400).json({ error: 'Not a valid directory.' });
+    }
+
+    const entries = fs.readdirSync(target, { withFileTypes: true });
+    const folders = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .map(e => e.name)
+      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+    const parent = path.dirname(target);
+    const hasParent = parent !== target && parent.startsWith(home);
+
+    res.json({
+      current: target,
+      folders,
+      parent: hasParent ? parent : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════
 // ── Run history (persisted to JSON file) ──
 // ══════════════════════════════════════
 const RUNS_FILE = path.join(__dirname, '..', 'runs.json');
