@@ -412,6 +412,10 @@ Remember: respond ONLY with valid JSON.`,
       req.session.lastResults = successful;
       req.session.originalFileName = file.originalname;
       req.session.originalFileExt = path.extname(file.originalname).toLowerCase();
+      // Save original file to disk for use as template later
+      const origPath = path.join(OUTPUT_DIR, '.original_' + req.sessionId + path.extname(file.originalname).toLowerCase());
+      fs.writeFileSync(origPath, file.buffer);
+      req.session.originalFilePath = origPath;
     }
 
     // Persist run to history
@@ -491,6 +495,7 @@ Return ONLY valid JSON.`,
 // ══════════════════════════════════════
 // ── Apply recommendations → versioned slide/page ──
 // ══════════════════════════════════════
+const PptxGenJS = require('pptxgenjs');
 const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = require('docx');
 
 app.post('/api/apply-recommendation', requireAuth, async (req, res) => {
@@ -503,137 +508,204 @@ app.post('/api/apply-recommendation', requireAuth, async (req, res) => {
     if (!recommendation) return res.status(400).json({ error: 'No recommendation provided.' });
 
     const originalExt = req.session?.originalFileExt || '.pptx';
-    const originalName = req.session?.originalFileName || 'pitch';
     const isPptx = ['.pptx', '.ppt'].includes(originalExt);
-    const isDocx = ['.docx', '.doc'].includes(originalExt);
 
-    // Prompt: generate ONLY the single affected slide or page content
+    // Prompt AI for the single slide/page content
     const formatInstruction = isPptx
-      ? `Generate ONLY the content for ONE replacement slide. Format as:
-SLIDE TITLE: <title>
-BULLET 1: <point>
-BULLET 2: <point>
-BULLET 3: <point>
-BULLET 4: <point>
-SPEAKER NOTES: <brief notes>
+      ? `Generate content for ONE PowerPoint slide. Use this exact format:
+SLIDE TITLE: <a clear, concise title>
+SUBTITLE: <one-line subtitle or context>
+BULLET: <key point 1>
+BULLET: <key point 2>
+BULLET: <key point 3>
+BULLET: <key point 4>
+BULLET: <key point 5>
+NOTES: <speaker notes — 2-3 sentences of talking points>
 
-Do NOT rewrite the full deck. Output ONLY this one slide.`
-      : `Generate ONLY the content for ONE replacement page/section. Format as:
-SECTION HEADING: <heading>
-BODY: <1-2 paragraphs of improved content for this specific section>
+Output ONLY this one slide. Do NOT rewrite the full deck.`
+      : `Generate content for ONE document section. Use this exact format:
+HEADING: <section heading>
+BODY: <paragraph 1 of improved content>
+BODY: <paragraph 2 of improved content>
 
-Do NOT rewrite the full document. Output ONLY this one section.`;
+Output ONLY this one section. Do NOT rewrite the full document.`;
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
-      system: `You are a pitch deck content editor for DealDeci. You apply a single recommendation by generating ONLY the specific slide or page that needs to change. Do NOT rewrite the full pitch.\n\n${formatInstruction}`,
+      system: `You are a pitch deck content editor. Apply the recommendation by generating ONLY the specific slide or page that needs to change.\n\n${formatInstruction}`,
       messages: [{
         role: 'user',
-        content: `Original pitch content:\n\n${pitchText}\n\nRecommendation from ${persona}:\n${recommendation.title}: ${recommendation.description}\n\nGenerate ONLY the single updated slide/page.`,
+        content: `Original pitch:\n\n${pitchText}\n\nRecommendation from ${persona}:\n${recommendation.title}: ${recommendation.description}\n\nGenerate the updated slide/page content.`,
       }],
     });
 
     const revised = response.content.find((b) => b.type === 'text')?.text || '';
 
-    // Determine version number
-    const versionFiles = fs.readdirSync(OUTPUT_DIR).filter(f => f.match(/DealDeci_Revised_V\d+/));
-    const version = Math.floor(versionFiles.length / 1) + 1; // count unique versions
+    // Version number
+    const existingVersions = fs.readdirSync(OUTPUT_DIR).filter(f => f.match(/DealDeci_Revised_V\d+/));
+    const usedVersions = existingVersions.map(f => parseInt(f.match(/V(\d+)/)?.[1] || '0'));
+    const version = usedVersions.length > 0 ? Math.max(...usedVersions) + 1 : 1;
     const baseName = `DealDeci_Revised_V${version}`;
     const savedFiles = [];
 
     if (isPptx) {
-      // Save as PPTX (single slide)
-      const pptxFile = await generatePptxSlide(revised, recommendation, persona, version);
-      const pptxPath = path.join(OUTPUT_DIR, `${baseName}.pptx`);
-      fs.writeFileSync(pptxPath, pptxFile);
+      const buf = await generatePptxSlide(revised, recommendation, persona, version, req.session?.originalFilePath);
+      const filePath = path.join(OUTPUT_DIR, `${baseName}.pptx`);
+      fs.writeFileSync(filePath, buf);
       savedFiles.push({ name: `${baseName}.pptx`, url: `/output/${baseName}.pptx` });
-    }
-
-    if (isDocx || !isPptx) {
-      // Save as DOCX (single page)
-      const docxFile = await generateDocxPage(revised, recommendation, persona, version);
-      const docxPath = path.join(OUTPUT_DIR, `${baseName}.docx`);
-      fs.writeFileSync(docxPath, docxFile);
+    } else {
+      const buf = await generateDocxPage(revised, recommendation, persona, version);
+      const filePath = path.join(OUTPUT_DIR, `${baseName}.docx`);
+      fs.writeFileSync(filePath, buf);
       savedFiles.push({ name: `${baseName}.docx`, url: `/output/${baseName}.docx` });
     }
 
-    res.json({
-      ok: true,
-      version,
-      folder: OUTPUT_DIR,
-      format: isPptx ? 'pptx' : 'docx',
-      files: savedFiles,
-    });
+    res.json({ ok: true, version, folder: OUTPUT_DIR, format: isPptx ? 'pptx' : 'docx', files: savedFiles });
   } catch (err) {
     console.error('Apply recommendation error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Generate a single PPTX slide
-async function generatePptxSlide(content, recommendation, persona, version) {
-  // Use a minimal PPTX structure via the docx-like approach
-  // Since 'pptx' npm packages are heavy, generate a clean DOCX labeled as a slide
-  // For true PPTX, we'd need pptxgenjs — let's use a lightweight approach
-  // Actually let's install and use a simple PPTX builder inline
-
-  // Parse the AI output
+// ── Generate a real .pptx slide using pptxgenjs ──
+async function generatePptxSlide(content, recommendation, persona, version, originalFilePath) {
+  // Parse AI output
   const lines = content.split('\n').filter(l => l.trim());
   let title = `Revised Slide — V${version}`;
+  let subtitle = `${persona} — Recommendation Applied`;
   const bullets = [];
   let notes = '';
 
   for (const line of lines) {
     const l = line.trim();
-    if (l.startsWith('SLIDE TITLE:')) title = l.replace('SLIDE TITLE:', '').trim();
-    else if (l.match(/^BULLET\s*\d*:/i)) bullets.push(l.replace(/^BULLET\s*\d*:/i, '').trim());
-    else if (l.startsWith('SPEAKER NOTES:')) notes = l.replace('SPEAKER NOTES:', '').trim();
-    else if (l && !l.startsWith('---')) bullets.push(l);
+    if (l.match(/^SLIDE TITLE:/i)) title = l.replace(/^SLIDE TITLE:/i, '').trim();
+    else if (l.match(/^SUBTITLE:/i)) subtitle = l.replace(/^SUBTITLE:/i, '').trim();
+    else if (l.match(/^BULLET:/i)) bullets.push(l.replace(/^BULLET:/i, '').trim());
+    else if (l.match(/^NOTES:/i)) notes = l.replace(/^NOTES:/i, '').trim();
+    else if (l.match(/^SPEAKER NOTES:/i)) notes = l.replace(/^SPEAKER NOTES:/i, '').trim();
+  }
+  // If no bullets parsed, treat remaining lines as bullets
+  if (bullets.length === 0) {
+    for (const line of lines) {
+      const l = line.trim();
+      if (!l.match(/^(SLIDE TITLE|SUBTITLE|NOTES|SPEAKER NOTES):/i) && l) bullets.push(l);
+    }
   }
 
-  // Generate as DOCX with slide-like formatting (1 page, large title, bullets)
-  const doc = new Document({
-    sections: [{
-      properties: {
-        page: { size: { width: 13.33 * 72 * 20, height: 7.5 * 72 * 20, orientation: 'landscape' } },
-      },
-      children: [
-        new Paragraph({
-          children: [new TextRun({ text: title, bold: true, size: 56, color: 'CE1126', font: 'Calibri' })],
-          spacing: { after: 400 },
-          alignment: AlignmentType.LEFT,
-        }),
-        new Paragraph({
-          children: [new TextRun({ text: `${persona} — Recommendation Applied`, size: 20, color: '666666', italics: true, font: 'Calibri' })],
-          spacing: { after: 300 },
-        }),
-        ...bullets.map(b => new Paragraph({
-          children: [new TextRun({ text: `\u2022  ${b}`, size: 28, color: '14213D', font: 'Calibri' })],
-          spacing: { after: 200 },
-          indent: { left: 400 },
-        })),
-        ...(notes ? [
-          new Paragraph({ spacing: { before: 600 } }),
-          new Paragraph({
-            children: [new TextRun({ text: 'Speaker Notes: ', bold: true, size: 18, color: '999999', font: 'Calibri' }), new TextRun({ text: notes, size: 18, color: '999999', font: 'Calibri' })],
-            border: { top: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' } },
-            spacing: { before: 200 },
-          }),
-        ] : []),
-        new Paragraph({
-          children: [new TextRun({ text: `Copyright \u00A9 ${new Date().getFullYear()} DealDeci LLC`, size: 14, color: 'AAAAAA', font: 'Calibri' })],
-          alignment: AlignmentType.RIGHT,
-          spacing: { before: 600 },
-        }),
-      ],
-    }],
+  // Try to extract design colors from original PPTX if available
+  let accentColor = 'CE1126';
+  let bgColor = 'FFFFFF';
+  let titleColor = '14213D';
+
+  // Check if original file has theme colors we can extract
+  if (originalFilePath && fs.existsSync(originalFilePath)) {
+    try {
+      const origBuf = fs.readFileSync(originalFilePath);
+      // Quick extract: look for theme colors in the XML
+      const { inflateRawSync } = require('zlib');
+      let pos = 0;
+      while (pos < origBuf.length - 4) {
+        if (origBuf.readUInt32LE(pos) !== 0x04034b50) break;
+        const compMethod = origBuf.readUInt16LE(pos + 8);
+        const compSize = origBuf.readUInt32LE(pos + 18);
+        const nameLen = origBuf.readUInt16LE(pos + 26);
+        const extraLen = origBuf.readUInt16LE(pos + 28);
+        const name = origBuf.toString('utf-8', pos + 30, pos + 30 + nameLen);
+        const dataStart = pos + 30 + nameLen + extraLen;
+        if (name.includes('theme1.xml') || name.includes('slideMaster1.xml')) {
+          try {
+            const data = compMethod === 0
+              ? origBuf.slice(dataStart, dataStart + compSize)
+              : inflateRawSync(origBuf.slice(dataStart, dataStart + compSize));
+            const xml = data.toString('utf-8');
+            // Extract accent1 color
+            const accent1Match = xml.match(/<a:accent1>.*?<a:srgbClr val="([A-Fa-f0-9]{6})"/s);
+            if (accent1Match) accentColor = accent1Match[1];
+            // Extract dk1 (dark text)
+            const dk1Match = xml.match(/<a:dk1>.*?<a:srgbClr val="([A-Fa-f0-9]{6})"/s);
+            if (dk1Match) titleColor = dk1Match[1];
+          } catch {}
+        }
+        pos = dataStart + compSize;
+      }
+    } catch {}
+  }
+
+  const pptx = new PptxGenJS();
+  pptx.author = 'DealDeci LLC';
+  pptx.company = 'DealDeci LLC';
+  pptx.subject = `Revised Pitch V${version}`;
+  pptx.title = title;
+
+  const slide = pptx.addSlide();
+
+  // Background
+  slide.background = { color: bgColor };
+
+  // Accent bar at top
+  slide.addShape(pptx.ShapeType.rect, {
+    x: 0, y: 0, w: '100%', h: 0.08,
+    fill: { color: accentColor },
   });
 
-  return await Packer.toBuffer(doc);
+  // Title
+  slide.addText(title, {
+    x: 0.6, y: 0.4, w: 8.8, h: 0.8,
+    fontSize: 28, fontFace: 'Calibri', bold: true,
+    color: titleColor,
+  });
+
+  // Subtitle
+  slide.addText(subtitle, {
+    x: 0.6, y: 1.15, w: 8.8, h: 0.4,
+    fontSize: 14, fontFace: 'Calibri', italic: true,
+    color: '888888',
+  });
+
+  // Recommendation box
+  slide.addShape(pptx.ShapeType.rect, {
+    x: 0.6, y: 1.7, w: 8.8, h: 0.5,
+    fill: { color: 'FFF5F3' },
+    line: { color: accentColor, width: 0.5 },
+    rectRadius: 0.05,
+  });
+  slide.addText(`${recommendation.title}: ${recommendation.description}`, {
+    x: 0.75, y: 1.75, w: 8.5, h: 0.4,
+    fontSize: 10, fontFace: 'Calibri', italic: true,
+    color: '666666',
+  });
+
+  // Bullet points
+  if (bullets.length > 0) {
+    const bulletObjs = bullets.map(b => ({
+      text: b,
+      options: { fontSize: 16, fontFace: 'Calibri', color: '333333', bullet: { code: '2022' }, indentLevel: 0 },
+    }));
+    slide.addText(bulletObjs, {
+      x: 0.6, y: 2.45, w: 8.8, h: 4.0,
+      valign: 'top',
+      lineSpacingMultiple: 1.4,
+    });
+  }
+
+  // Footer
+  slide.addText(`DealDeci LLC — Version ${version}  |  \u00A9 ${new Date().getFullYear()}`, {
+    x: 0.6, y: 6.85, w: 8.8, h: 0.3,
+    fontSize: 8, fontFace: 'Calibri',
+    color: 'AAAAAA',
+    align: 'right',
+  });
+
+  // Speaker notes
+  if (notes) {
+    slide.addNotes(notes);
+  }
+
+  return await pptx.write({ outputType: 'nodebuffer' });
 }
 
-// Generate a single DOCX page
+// ── Generate a real .docx page ──
 async function generateDocxPage(content, recommendation, persona, version) {
   const lines = content.split('\n').filter(l => l.trim());
   let heading = `Revised Section — V${version}`;
@@ -641,9 +713,10 @@ async function generateDocxPage(content, recommendation, persona, version) {
 
   for (const line of lines) {
     const l = line.trim();
-    if (l.startsWith('SECTION HEADING:')) heading = l.replace('SECTION HEADING:', '').trim();
-    else if (l.startsWith('BODY:')) bodyLines.push(l.replace('BODY:', '').trim());
-    else if (l && !l.startsWith('---')) bodyLines.push(l);
+    if (l.match(/^HEADING:/i)) heading = l.replace(/^HEADING:/i, '').trim();
+    else if (l.match(/^SECTION HEADING:/i)) heading = l.replace(/^SECTION HEADING:/i, '').trim();
+    else if (l.match(/^BODY:/i)) bodyLines.push(l.replace(/^BODY:/i, '').trim());
+    else if (l && !l.match(/^(HEADING|SECTION HEADING):/i)) bodyLines.push(l);
   }
 
   const doc = new Document({
@@ -669,7 +742,7 @@ async function generateDocxPage(content, recommendation, persona, version) {
           spacing: { after: 200 },
         })),
         new Paragraph({
-          children: [new TextRun({ text: `Copyright \u00A9 ${new Date().getFullYear()} DealDeci LLC. Confidential.`, size: 16, color: 'AAAAAA', font: 'Calibri' })],
+          children: [new TextRun({ text: `\u00A9 ${new Date().getFullYear()} DealDeci LLC. Confidential.`, size: 16, color: 'AAAAAA', font: 'Calibri' })],
           alignment: AlignmentType.RIGHT,
           spacing: { before: 800 },
         }),
